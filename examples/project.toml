@@ -1,0 +1,31 @@
+schema_version = 1
+id = "sample-app"
+name = "Sample App"
+description = "Example Mallee project"
+
+[project]
+working_directory = "."
+
+[logs]
+sources = ["%LOCALAPPDATA%/SampleApp/logs/SampleApp.jsonl"]
+open_with_deebugee = true
+
+[artifacts]
+paths = ["target/release/*.exe", "dist/*.zip"]
+
+[[actions]]
+id = "dev"
+label = "Dev Server"
+program = "pnpm"
+args = ["dev"]
+kind = "long_running"
+terminal = "captured"
+concurrency = "replace_same_action"
+
+[[actions]]
+id = "build-installer"
+label = "Build Installer"
+program = "pwsh"
+args = ["-NoLogo", "-NoProfile", "-File", ".mallee/scripts/build-installer.ps1"]
+kind = "task"
+terminal = "captured"

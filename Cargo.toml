@@ -1,0 +1,33 @@
+[workspace]
+members = [
+  "apps/desktop/src-tauri",
+  "crates/mallee-cli",
+  "crates/mallee-core",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/JustApeasantCoder/Mallee"
+
+[workspace.dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+dee-bugee-rust = { git = "https://github.com/JustApeasantCoder/DeeBugee.git", rev = "5c088314de62f2a3ac42c234e7d478f958a1b127" }
+glob = "0.3"
+regex = "1.11"
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.11", features = [] }
+thiserror = "2.0"
+tokio = { version = "1.49", features = ["full"] }
+toml = "0.9"
+toml_edit = "0.25"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1.20", features = ["v4", "serde"] }

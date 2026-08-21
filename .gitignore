@@ -1,0 +1,8 @@
+/target/
+/apps/desktop/dist/
+/apps/desktop/node_modules/
+/.idea/
+/.vscode/
+*.log
+*.db
+*.bat
