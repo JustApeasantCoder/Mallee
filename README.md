@@ -63,3 +63,15 @@ Mallee-specific.
 
 See [PROJECT_PLAN.md](PROJECT_PLAN.md) for architecture, phases, and acceptance
 criteria.
+
+## Agent skill
+
+Mallee's repository-onboarding workflow is available as the
+[`mallee-project-setup`](skills/mallee-project-setup/SKILL.md) agent skill.
+Install it with the Skills CLI:
+
+```powershell
+npx skills add JustApeasantCoder/Mallee --skill mallee-project-setup
+```
+
+[![skills.sh](https://skills.sh/b/JustApeasantCoder/Mallee)](https://skills.sh/JustApeasantCoder/Mallee)

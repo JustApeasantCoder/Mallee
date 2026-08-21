@@ -1,0 +1,5 @@
+interface:
+  display_name: "Mallee Project Setup"
+  short_description: "Onboard Mallee projects end to end"
+  brand_color: "#9BD64B"
+  default_prompt: "Use $mallee-project-setup to onboard this repository into Mallee end to end."
