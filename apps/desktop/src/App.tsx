@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type PointerEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -135,6 +136,7 @@ function ProjectTerminal({ projectId, projectName, selected, onCopy, onRegister 
 }
 
 function App() {
+  const [appVersion, setAppVersion] = useState<string>();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectIcons, setProjectIcons] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<string>();
@@ -148,6 +150,10 @@ function App() {
   const [dragging, setDragging] = useState<{ kind: "project" | "action"; id: string }>();
   const [layoutSplits, setLayoutSplits] = useState<LayoutSplits>(loadLayoutSplits);
   const [actionsContentHeight, setActionsContentHeight] = useState(150);
+
+  useEffect(() => {
+    void getVersion().then(setAppVersion).catch(() => undefined);
+  }, []);
   const contentGrid = useRef<HTMLDivElement>(null);
   const actionsPanel = useRef<HTMLElement>(null);
   const actionGrid = useRef<HTMLDivElement>(null);
@@ -530,7 +536,7 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <button className="side-action" onClick={registerProject}>＋ Add Project</button>
-          <span className="version">v0.1.0</span>
+          <span className="version">{appVersion ? `v${appVersion}` : ""}</span>
         </div>
       </aside>
 
