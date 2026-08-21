@@ -10,6 +10,8 @@ Use Mallee when you want the routine work for several local repositories—start
 build, test, package, inspect output, and review run history—in one predictable
 place without a collection of untracked helper scripts.
 
+![Mallee desktop app showing project actions, captured terminal output, run history, and artifacts](assets/Mallee.png)
+
 ## What it does
 
 - Registers projects containing `.mallee/project.toml`.
