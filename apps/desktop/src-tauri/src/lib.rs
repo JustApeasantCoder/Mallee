@@ -691,9 +691,11 @@ fn locate_deebugee() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    let known = PathBuf::from(r"C:\@My APPs\DeeBugee\target\release\dee-bugee.exe");
-    if known.is_file() {
-        return Some(known);
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let installed = installed_deebugee_path(Path::new(&local_app_data));
+        if installed.is_file() {
+            return Some(installed);
+        }
     }
     let output = std::process::Command::new("where.exe")
         .arg("dee-bugee.exe")
@@ -706,6 +708,13 @@ fn locate_deebugee() -> Option<PathBuf> {
         .lines()
         .next()
         .map(PathBuf::from)
+}
+
+fn installed_deebugee_path(local_app_data: &Path) -> PathBuf {
+    local_app_data
+        .join("Programs")
+        .join("DeeBugee")
+        .join("dee-bugee.exe")
 }
 
 fn display_error(error: impl std::fmt::Display) -> String {
@@ -782,5 +791,13 @@ mod tests {
         };
 
         assert_eq!(resolve_log_folder(&project).unwrap(), log_directory);
+    }
+
+    #[test]
+    fn resolves_the_standard_deebugee_installation_path() {
+        assert_eq!(
+            installed_deebugee_path(Path::new(r"C:\Users\Sample\AppData\Local")),
+            PathBuf::from(r"C:\Users\Sample\AppData\Local\Programs\DeeBugee\dee-bugee.exe")
+        );
     }
 }

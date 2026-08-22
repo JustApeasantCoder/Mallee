@@ -6,3 +6,6 @@
 *.log
 *.db
 *.bat
+.mallee/
+.deebugee/
+.playwright-cli/

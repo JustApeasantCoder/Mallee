@@ -19,6 +19,11 @@ dependency, cache, generated output, vendored, and VCS directories.
 
 The canonical manifest path is `.mallee/project.toml`.
 
+- Add or retain an exact `.mallee/` entry in the repository-root `.gitignore` by
+  default. This covers the manifest, scripts, icon override, and future local
+  Mallee state. If `.mallee` files are already tracked or the ignore file has
+  explicit negations for them, treat that as an intentional repository policy:
+  do not untrack or override it without approval, and report the exception.
 - Use schema version 1 until Mallee provides a migration.
 - Use stable lowercase action IDs containing letters, digits, and hyphens.
 - Keep action labels short and precise. Prefer a clear verb and target such as
@@ -28,6 +33,11 @@ The canonical manifest path is `.mallee/project.toml`.
   automatic version bumping. Offer `x.x.2` as the default version format and,
   if the user declines it, request their desired format. Do not infer a format
   or add version-bump behavior without that answer.
+- Always ask during onboarding whether to add a `Push Release` action. Explain
+  that it will build the applicable EXE,
+  installer, portable package, or other project-defined release artifacts and
+  publish them to a GitHub release. Add it only after the user opts in, then
+  follow [push-release.md](push-release.md).
 - Keep `program` separate from `args`; do not collapse normal commands into an
   opaque shell string.
 - Resolve relative paths from the repository root.
@@ -56,7 +66,7 @@ registration as a follow-up for the user. After editing:
 3. Run `mallee actions <project-id> --json`.
 4. Run `mallee doctor <project-id> --json` and address safe setup defects.
 5. Confirm the project appears in `mallee list --json` and report the ready
-   actions, detected icon, and log location.
+   actions, detected icon, log location, and `.mallee/` ignore status.
 
 An explicitly inspection-only, detection-only, or script-only request does not
 register the repository unless the user also asks to add or onboard it.

@@ -1,4 +1,0 @@
-schema_version = 1
-id = "mallee"
-name = "Mallee"
-sources = ["%LOCALAPPDATA%/Mallee/logs/Mallee.jsonl"]
