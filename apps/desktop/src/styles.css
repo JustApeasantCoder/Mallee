@@ -154,7 +154,7 @@ button { color: inherit; }
   min-height: 0;
   --actions-row-height: max(var(--actions-content-height, 150px), calc((100% - 20px) * var(--actions-split)));
   grid-template-columns: minmax(420px, calc((100% - 10px) * var(--left-split))) minmax(300px, 1fr);
-  grid-template-rows: var(--actions-row-height) minmax(180px, 1fr) minmax(115px, calc((100% - 20px) * var(--artifacts-split)));
+  grid-template-rows: var(--actions-row-height) minmax(0, 1fr) minmax(0, calc((100% - 20px) * var(--artifacts-split)));
   grid-template-areas:
     "actions history"
     "terminal history"

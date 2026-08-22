@@ -489,7 +489,12 @@ function App() {
           return { ...current, actions: Math.min(0.58, Math.max(0.22, (clientY - bounds.top) / usableHeight)) };
         }
 
-        return { ...current, artifacts: Math.max(0, (bounds.bottom - clientY) / usableHeight) };
+        // History and Artifacts may use the entire vertical space beneath
+        // Actions. The Actions row itself is the only physical boundary.
+        const actionsBottom = actionsPanel.current?.getBoundingClientRect().bottom ?? bounds.top;
+        const dividerTop = Math.min(bounds.bottom, actionsBottom + 10);
+        const dividerY = Math.min(bounds.bottom, Math.max(dividerTop, clientY));
+        return { ...current, artifacts: (bounds.bottom - dividerY) / usableHeight };
       });
     };
 
