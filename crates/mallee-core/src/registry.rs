@@ -39,6 +39,20 @@ impl RegistryStore {
         let root = canonical_project_root(root)?;
         let manifest = ProjectManifest::load(&root)?;
         let mut registry = self.read()?;
+        if let Some(existing) = registry.projects.iter().find_map(|entry| {
+            let existing_root = canonical_project_root(&entry.root).ok()?;
+            if existing_root == root {
+                return None;
+            }
+            let existing_manifest = ProjectManifest::load(&existing_root).ok()?;
+            (existing_manifest.id == manifest.id).then_some(existing_root)
+        }) {
+            anyhow::bail!(
+                "project id '{}' is already registered for {}; project ids must be unique",
+                manifest.id,
+                existing.display()
+            );
+        }
         if !registry
             .projects
             .iter()
@@ -120,5 +134,36 @@ impl RegistryStore {
         let text = toml::to_string_pretty(registry)?;
         fs::write(&self.path, text)
             .with_context(|| format!("failed to write {}", self.path.display()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::RegistryStore;
+
+    fn write_project(root: &std::path::Path, id: &str) {
+        let config = root.join(".mallee");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(
+            config.join("project.toml"),
+            format!("schema_version = 1\nid = \"{id}\"\nname = \"{id}\"\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_a_duplicate_project_id_from_a_different_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first");
+        let second = directory.path().join("second");
+        write_project(&first, "sample");
+        write_project(&second, "sample");
+        let store = RegistryStore::new(directory.path().join("registry.toml"));
+
+        store.add(&first).unwrap();
+        let error = store.add(&second).unwrap_err();
+        assert!(error.to_string().contains("project ids must be unique"));
     }
 }

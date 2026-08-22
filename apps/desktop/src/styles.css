@@ -69,7 +69,7 @@ button { color: inherit; }
 }
 
 .brand-mark.large { width: 42px; height: 42px; font-size: 22px; }
-.side-label, .eyebrow { color: #75808a; font-size: 10px; letter-spacing: .12em; }
+.side-label { color: #75808a; font-size: 10px; letter-spacing: .12em; }
 .side-label { padding: 20px 18px 9px; }
 .project-list { overflow: auto; }
 

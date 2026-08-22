@@ -23,7 +23,7 @@ function loadLayoutSplits(): LayoutSplits {
     return {
       left: clampNumber(saved.left, 0.4, 0.72, DEFAULT_LAYOUT_SPLITS.left),
       actions: clampNumber(saved.actions, 0.22, 0.58, DEFAULT_LAYOUT_SPLITS.actions),
-      artifacts: clampNumber(saved.artifacts, 0.14, 0.38, DEFAULT_LAYOUT_SPLITS.artifacts),
+      artifacts: clampNumber(saved.artifacts, 0, 1, DEFAULT_LAYOUT_SPLITS.artifacts),
     };
   } catch {
     return DEFAULT_LAYOUT_SPLITS;
@@ -486,12 +486,10 @@ function App() {
         }
 
         if (axis === "actions") {
-          const maximum = Math.min(0.58, 1 - current.artifacts - 0.22);
-          return { ...current, actions: Math.min(maximum, Math.max(0.22, (clientY - bounds.top) / usableHeight)) };
+          return { ...current, actions: Math.min(0.58, Math.max(0.22, (clientY - bounds.top) / usableHeight)) };
         }
 
-        const maximum = Math.min(0.38, 1 - current.actions - 0.22);
-        return { ...current, artifacts: Math.min(maximum, Math.max(0.14, (bounds.bottom - clientY) / usableHeight)) };
+        return { ...current, artifacts: Math.max(0, (bounds.bottom - clientY) / usableHeight) };
       });
     };
 
@@ -545,15 +543,16 @@ function App() {
           <>
             <header className="project-header">
               <div>
-                <div className="eyebrow">SELECTED PROJECT</div>
                 <h1>{selected.manifest.name}</h1>
                 <p>{selected.root}</p>
               </div>
-              <div className="header-actions">
-                <button onClick={() => void invoke("open_in_deebugee", { projectId: selected.manifest.id }).catch((reason) => setError(String(reason)))}>
-                  Open in DeeBugee ↗
-                </button>
-              </div>
+              {selected.manifest.logs.open_with_deebugee && (
+                <div className="header-actions">
+                  <button onClick={() => void invoke("open_in_deebugee", { projectId: selected.manifest.id }).catch((reason) => setError(String(reason)))}>
+                    Open in DeeBugee ↗
+                  </button>
+                </div>
+              )}
             </header>
 
             {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
@@ -573,7 +572,7 @@ function App() {
                   <h2>ACTIONS</h2>
                   <div>
                     <button className="link-button" onClick={() => setShowAddAction(true)}>＋ ADD ACTION</button>
-                    <button className="link-button" onClick={() => void invoke("open_manifest", { projectId: selected.manifest.id }).catch((reason) => setError(String(reason)))}>OPEN TOML ↗</button>
+                    <button className="link-button" onClick={() => void invoke("open_manifest", { projectId: selected.manifest.id }).catch((reason) => setError(String(reason)))}>↗ OPEN TOML</button>
                   </div>
                 </div>
                 <div className="action-grid" ref={actionGrid}>
@@ -699,7 +698,7 @@ function App() {
         <div className="context-menu-layer" onMouseDown={() => setActionMenu(undefined)}>
           <div className="action-context-menu" style={{ left: actionMenu.x, top: actionMenu.y }} onMouseDown={(event) => event.stopPropagation()}>
             <button onClick={() => { setEditingAction(actionMenu.action); setActionMenu(undefined); }}>Edit title…</button>
-            <button onClick={() => { setEditingAction(actionMenu.action); setActionMenu(undefined); }}>Change logo…</button>
+            <button onClick={() => { setEditingAction(actionMenu.action); setActionMenu(undefined); }}>Change icon…</button>
           </div>
         </div>
       )}
@@ -708,13 +707,13 @@ function App() {
           <form className="action-modal" onSubmit={saveActionPresentation} onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-title"><div><span>EDIT ACTION CARD</span><strong>{editingAction.id}</strong></div><button type="button" onClick={() => setEditingAction(undefined)}>×</button></div>
             <label>Title<input name="label" required defaultValue={editingAction.label} autoFocus /></label>
-            <label>Logo<select name="icon" defaultValue={editingAction.icon ?? ""}>
-              <option value="">Automatic</option>
-              <option value="▷">Run</option><option value="✓">Check</option><option value="◇">Build</option>
-              <option value="⇩">Install</option><option value="◆">Release</option><option value="↗">Open</option>
-              <option value=">_">Development</option><option value="□">Generic</option>
+            <label>Icon<select name="icon" defaultValue={editingAction.icon ?? ""}>
+              <option value="">□ Automatic</option>
+              <option value="▷">▷ Run</option><option value="✓">✓ Check</option><option value="◇">◇ Build</option>
+              <option value="⇩">⇩ Install</option><option value="◆">◆ Release</option><option value="↗">↗ Open</option>
+              <option value=">_">&gt;_ Development</option><option value="□">□ Generic</option>
             </select></label>
-            <div className="manifest-preview">The title and logo are saved to <strong>.mallee/project.toml</strong>.</div>
+            <div className="manifest-preview">The title and icon are saved to <strong>.mallee/project.toml</strong>.</div>
             <div className="modal-actions"><button type="button" onClick={() => setEditingAction(undefined)}>CANCEL</button><button className="primary" type="submit">SAVE</button></div>
           </form>
         </div>

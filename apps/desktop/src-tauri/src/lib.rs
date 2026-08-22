@@ -28,7 +28,7 @@ struct RuntimeSessions {
 
 #[derive(Clone)]
 struct ActiveProcess {
-    process_id: u32,
+    process_id: Option<u32>,
     project_id: String,
     action_id: String,
 }
@@ -288,6 +288,10 @@ async fn start_action(
             )
         })?;
 
+    if action.confirm && !confirmed {
+        return Err("this action requires confirmation".into());
+    }
+
     if let Some(operation) = action.operation.as_deref() {
         perform_operation(operation, &project)?;
         tracing::info!(
@@ -299,36 +303,6 @@ async fn start_action(
             "[Action] Project operation completed"
         );
         return Ok(format!("operation-{}", Uuid::new_v4()));
-    }
-
-    if action.confirm && !confirmed {
-        return Err("this action requires confirmation".into());
-    }
-
-    let existing = state
-        .runtime
-        .processes
-        .lock()
-        .map_err(|_| "process registry is unavailable".to_string())?
-        .iter()
-        .filter(|(_, active)| {
-            active.project_id == project.manifest.id && active.action_id == action.id
-        })
-        .map(|(run_id, active)| (run_id.clone(), active.process_id))
-        .collect::<Vec<_>>();
-    if !existing.is_empty() && action.concurrency == ConcurrencyPolicy::Reject {
-        return Err(format!("action '{}' is already running", action.label));
-    }
-    if action.concurrency == ConcurrencyPolicy::ReplaceSameAction {
-        for (existing_run_id, process_id) in existing {
-            state
-                .runtime
-                .cancelled
-                .lock()
-                .map_err(|_| "cancellation registry is unavailable".to_string())?
-                .insert(existing_run_id);
-            terminate_process_tree(process_id).await?;
-        }
     }
 
     let run_id = Uuid::new_v4().to_string();
@@ -346,17 +320,66 @@ async fn start_action(
         .append(true)
         .open(&transcript_path)
         .map_err(display_error)?;
-    state
-        .core
-        .history
-        .start_run(
-            &run_id,
-            &project.manifest.id,
-            &action.id,
-            &action.label,
-            &transcript_path,
-        )
-        .map_err(display_error)?;
+    let replaced_processes = {
+        let mut processes = state
+            .runtime
+            .processes
+            .lock()
+            .map_err(|_| "process registry is unavailable".to_string())?;
+        let existing = processes
+            .iter()
+            .filter(|(_, active)| {
+                active.project_id == project.manifest.id && active.action_id == action.id
+            })
+            .map(|(run_id, active)| (run_id.clone(), active.process_id))
+            .collect::<Vec<_>>();
+        if !existing.is_empty() && action.concurrency == ConcurrencyPolicy::Reject {
+            return Err(format!("action '{}' is already running", action.label));
+        }
+        processes.insert(
+            run_id.clone(),
+            ActiveProcess {
+                process_id: None,
+                project_id: project.manifest.id.clone(),
+                action_id: action.id.clone(),
+            },
+        );
+        existing
+    };
+    if action.concurrency == ConcurrencyPolicy::ReplaceSameAction {
+        {
+            let mut cancelled = state
+                .runtime
+                .cancelled
+                .lock()
+                .map_err(|_| "cancellation registry is unavailable".to_string())?;
+            for (existing_run_id, _) in &replaced_processes {
+                cancelled.insert(existing_run_id.clone());
+            }
+        }
+        for (_, process_id) in replaced_processes {
+            if let Some(process_id) = process_id
+                && let Err(error) = terminate_process_tree(process_id).await
+            {
+                if let Ok(mut processes) = state.runtime.processes.lock() {
+                    processes.remove(&run_id);
+                }
+                return Err(error);
+            }
+        }
+    }
+    if let Err(error) = state.core.history.start_run(
+        &run_id,
+        &project.manifest.id,
+        &action.id,
+        &action.label,
+        &transcript_path,
+    ) {
+        if let Ok(mut processes) = state.runtime.processes.lock() {
+            processes.remove(&run_id);
+        }
+        return Err(display_error(error));
+    }
 
     let core = state.core.clone();
     let runtime = Arc::clone(&state.runtime);
@@ -393,8 +416,6 @@ async fn start_action(
 
         let runtime_for_spawn = Arc::clone(&runtime);
         let run_id_for_spawn = run_id_for_task.clone();
-        let project_id_for_spawn = project.manifest.id.clone();
-        let action_id_for_spawn = action.id.clone();
         let app_for_output = app_for_task.clone();
         let run_id_for_output = run_id_for_task.clone();
         let project_id_for_output = project.manifest.id.clone();
@@ -405,16 +426,20 @@ async fn start_action(
             &project.manifest,
             &action,
             move |process_id| {
-                if let Ok(mut processes) = runtime_for_spawn.processes.lock() {
-                    processes.insert(
-                        run_id_for_spawn,
-                        ActiveProcess {
-                            process_id,
-                            project_id: project_id_for_spawn,
-                            action_id: action_id_for_spawn,
-                        },
-                    );
-                }
+                let registered = if let Ok(mut processes) = runtime_for_spawn.processes.lock()
+                    && let Some(active) = processes.get_mut(&run_id_for_spawn)
+                {
+                    active.process_id = Some(process_id);
+                    true
+                } else {
+                    false
+                };
+                registered
+                    && runtime_for_spawn
+                        .cancelled
+                        .lock()
+                        .map(|cancelled| !cancelled.contains(&run_id_for_spawn))
+                        .unwrap_or(false)
             },
             move |output: RunOutput| {
                 if let Ok(mut file) = transcript_for_output.lock() {
@@ -502,9 +527,10 @@ async fn start_action(
             }
             Err(error) => {
                 let duration_ms = started.elapsed().as_millis() as i64;
+                let status = if cancelled { "cancelled" } else { "failed" };
                 let _ = core
                     .history
-                    .finish_run(&run_id_for_task, "failed", duration_ms, None);
+                    .finish_run(&run_id_for_task, status, duration_ms, None);
                 emit_run_event(
                     &app_for_task,
                     RunEventPayload {
@@ -514,7 +540,7 @@ async fn start_action(
                         kind: "finished".into(),
                         stream: None,
                         line: Some(error.to_string()),
-                        status: Some("failed".into()),
+                        status: Some(status.into()),
                         exit_code: None,
                         duration_ms: Some(duration_ms),
                     },
@@ -555,7 +581,11 @@ async fn stop_run(run_id: String, state: State<'_, AppState>) -> Result<(), Stri
         .map_err(|_| "cancellation registry is unavailable".to_string())?
         .insert(run_id.clone());
 
-    terminate_process_tree(process_id).await
+    if let Some(process_id) = process_id {
+        terminate_process_tree(process_id).await
+    } else {
+        Ok(())
+    }
 }
 
 async fn terminate_process_tree(process_id: u32) -> Result<(), String> {
@@ -577,6 +607,9 @@ async fn terminate_process_tree(process_id: u32) -> Result<(), String> {
 #[tauri::command]
 fn open_in_deebugee(project_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let project = find_project(&state.core, &project_id)?;
+    if !project.manifest.logs.open_with_deebugee {
+        return Err("this project has not enabled DeeBugee integration".into());
+    }
     let executable = locate_deebugee().ok_or_else(|| {
         "DeeBugee was not found. Set DEEBUGEE_EXE or install dee-bugee.exe on PATH.".to_string()
     })?;

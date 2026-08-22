@@ -12,7 +12,7 @@ use tokio::{
     process::Command,
 };
 
-use crate::{Action, ProjectManifest, expand_environment_path};
+use crate::{Action, ProjectManifest, TerminalMode, expand_environment_path};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -42,7 +42,7 @@ pub async fn execute_action<F>(
     root: &Path,
     manifest: &ProjectManifest,
     action: &Action,
-    on_spawn: impl FnOnce(u32),
+    on_spawn: impl FnOnce(u32) -> bool,
     on_output: F,
 ) -> Result<RunResult>
 where
@@ -66,19 +66,41 @@ where
     let resolved_program = resolve_program(program, root)
         .with_context(|| format!("program not found: '{program}'"))?;
     let mut command = Command::new(&resolved_program);
-    command
-        .args(&action.args)
-        .current_dir(&working_directory)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(false);
+    command.args(&action.args).current_dir(&working_directory);
+    match action.terminal {
+        TerminalMode::Captured => {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+        }
+        TerminalMode::Interactive => {
+            command
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+        TerminalMode::Hidden => {
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        }
+    }
+    command.kill_on_drop(false);
 
     #[cfg(windows)]
     {
+        const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        let flags = CREATE_NEW_PROCESS_GROUP
+            | if action.terminal == TerminalMode::Interactive {
+                CREATE_NEW_CONSOLE
+            } else {
+                CREATE_NO_WINDOW
+            };
+        command.creation_flags(flags);
     }
 
     let mut child = command
@@ -87,7 +109,10 @@ where
     let process_id = child
         .id()
         .context("spawned process did not expose a process id")?;
-    on_spawn(process_id);
+    if !on_spawn(process_id) {
+        let _ = child.kill().await;
+        bail!("action was cancelled before it started");
+    }
 
     let on_output = Arc::new(on_output);
     let stdout = child.stdout.take();

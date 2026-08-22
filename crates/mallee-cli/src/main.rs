@@ -146,7 +146,7 @@ async fn main() -> Result<()> {
                 &selected.root,
                 &selected.manifest,
                 &configured,
-                |_| {},
+                |_| true,
                 move |output: RunOutput| {
                     let prefix = match output.stream {
                         OutputStream::Stdout => "",
