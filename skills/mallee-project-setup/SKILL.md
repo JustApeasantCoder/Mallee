@@ -33,6 +33,9 @@ them to run a follow-up command:
    project's real release setup to build the applicable executable, installer,
    portable package, or other distributable artifacts and publish them to a
    GitHub release. Do not add this publishing action unless the user opts in.
+   When authoring actions, set `sound_notification = true` only for the canonical
+   `Build Installer` and `Push Release` actions. Leave it omitted (the default
+   `false`) for every other action unless the user explicitly asks otherwise.
 3. Add `.mallee/` to the repository-root `.gitignore` by default so the manifest,
    scripts, icon override, and other machine-local Mallee setup are not committed.
    Preserve an existing intentional tracking policy; do not untrack already

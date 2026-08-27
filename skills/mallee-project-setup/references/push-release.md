@@ -28,9 +28,11 @@ derive version and filenames from authoritative project metadata.
 ## Manifest and safety requirements
 
 Use the stable action ID `push-release`, label it `Push Release`, and set
-`confirm = true`. Its description or confirmation text should state that it
-builds release artifacts and publishes a GitHub release. Prefer captured terminal
-output unless the real project workflow requires interaction.
+`confirm = true` and `sound_notification = true`. Its description or
+confirmation text should state that it builds release artifacts and publishes a
+GitHub release. Prefer captured terminal output unless the real project workflow
+requires interaction. `Push Release` is one of the only two actions that receive
+sound notifications by default; the other is `Build Installer`.
 
 Never embed tokens, credentials, signing material, owner names, repository
 names, branch names, or version numbers when they can be resolved safely from

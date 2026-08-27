@@ -45,6 +45,10 @@ The canonical manifest path is `.mallee/project.toml`.
   `concurrency = "replace_same_action"`.
 - Add `confirm = true` to release, publish, sign, deployment, or destructive
   actions.
+- Set `sound_notification = true` only on the canonical `build-installer`
+  (`Build Installer`) and `push-release` (`Push Release`) actions. Omit the
+  field for every other action so it retains the default `false`, unless the
+  user explicitly requests a different notification policy.
 - Configure artifact globs to actual output locations, not hoped-for ones.
 - Prefer environment-based or repository-relative log paths over machine-specific
   absolute paths.

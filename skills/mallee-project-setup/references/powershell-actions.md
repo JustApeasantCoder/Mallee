@@ -74,7 +74,12 @@ program = "pwsh"
 args = ["-NoLogo", "-NoProfile", "-File", ".mallee/scripts/build-installer.ps1"]
 kind = "task"
 terminal = "captured"
+sound_notification = true
 ```
+
+`Build Installer` is one of the two default sound-enabled actions. Do not add
+`sound_notification = true` to other generated PowerShell actions unless the
+user explicitly requests it; the other default is `Push Release`.
 
 Validate PowerShell parsing when possible, run the smallest safe path, and verify
 that a deliberate native failure produces a nonzero script exit and a failed
