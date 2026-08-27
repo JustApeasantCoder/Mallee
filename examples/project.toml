@@ -20,6 +20,7 @@ program = "pnpm"
 args = ["dev"]
 kind = "long_running"
 terminal = "captured"
+sound_notification = true
 concurrency = "replace_same_action"
 
 [[actions]]

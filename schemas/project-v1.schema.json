@@ -53,7 +53,8 @@
             "enum": ["allow", "reject", "replace_same_action"]
           },
           "timeout_seconds": { "type": "integer", "minimum": 1 },
-          "confirm": { "type": "boolean" }
+          "confirm": { "type": "boolean" },
+          "sound_notification": { "type": "boolean", "default": false }
         },
         "oneOf": [
           { "required": ["program"], "not": { "required": ["operation"] } },

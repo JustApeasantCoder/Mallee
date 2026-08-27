@@ -14,6 +14,7 @@ export interface Action {
   concurrency: "allow" | "reject" | "replace_same_action";
   timeout_seconds?: number;
   confirm: boolean;
+  sound_notification: boolean;
 }
 
 export interface ProjectManifest {

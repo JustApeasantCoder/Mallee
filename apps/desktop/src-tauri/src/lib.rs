@@ -16,9 +16,11 @@ use mallee_core::{
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use uuid::Uuid;
 
 const RUN_EVENT: &str = "mallee://run-event";
+const TERMINAL_ACTION_ID: &str = "__terminal__";
 
 #[derive(Default)]
 struct RuntimeSessions {
@@ -290,6 +292,19 @@ async fn start_action(
 
     if action.confirm && !confirmed {
         return Err("this action requires confirmation".into());
+    }
+
+    if state
+        .runtime
+        .processes
+        .lock()
+        .map_err(|_| "process registry is unavailable".to_string())?
+        .values()
+        .any(|active| {
+            active.project_id == project.manifest.id && active.action_id == TERMINAL_ACTION_ID
+        })
+    {
+        return Err("wait for the terminal command to finish before starting an action".into());
     }
 
     if let Some(operation) = action.operation.as_deref() {
@@ -565,6 +580,201 @@ async fn start_action(
 }
 
 #[tauri::command]
+async fn start_terminal_command(
+    project_id: String,
+    command: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Err("terminal command cannot be empty".into());
+    }
+    if command.len() > 8192 {
+        return Err("terminal command is too long".into());
+    }
+
+    let project = find_project(&state.core, &project_id)?;
+    let working_directory =
+        expand_environment_path(&project.manifest.project.working_directory, &project.root);
+    if !working_directory.is_dir() {
+        return Err(format!(
+            "working directory does not exist: {}",
+            working_directory.display()
+        ));
+    }
+
+    let run_id = Uuid::new_v4().to_string();
+    {
+        let mut processes = state
+            .runtime
+            .processes
+            .lock()
+            .map_err(|_| "process registry is unavailable".to_string())?;
+        if processes
+            .values()
+            .any(|active| active.project_id == project.manifest.id)
+        {
+            return Err(
+                "wait for the current project run to finish before entering a command".into(),
+            );
+        }
+        processes.insert(
+            run_id.clone(),
+            ActiveProcess {
+                process_id: None,
+                project_id: project.manifest.id.clone(),
+                action_id: TERMINAL_ACTION_ID.into(),
+            },
+        );
+    }
+
+    let runtime = Arc::clone(&state.runtime);
+    let run_id_for_task = run_id.clone();
+    let command = command.to_string();
+    tauri::async_runtime::spawn(async move {
+        let started = Instant::now();
+        emit_run_event(
+            &app,
+            RunEventPayload {
+                run_id: run_id_for_task.clone(),
+                project_id: project.manifest.id.clone(),
+                action_id: TERMINAL_ACTION_ID.into(),
+                kind: "started".into(),
+                stream: None,
+                line: None,
+                status: Some("running".into()),
+                exit_code: None,
+                duration_ms: None,
+            },
+        );
+
+        let mut process = if cfg!(windows) {
+            let mut process = tokio::process::Command::new("powershell.exe");
+            process.args(["-NoLogo", "-NoProfile", "-Command", &command]);
+            process
+        } else {
+            let mut process = tokio::process::Command::new("sh");
+            process.args(["-lc", &command]);
+            process
+        };
+        process
+            .current_dir(&working_directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(false);
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            process.creation_flags(CREATE_NO_WINDOW);
+        }
+
+        let result = match process.spawn() {
+            Ok(mut child) => {
+                if let Some(process_id) = child.id()
+                    && let Ok(mut processes) = runtime.processes.lock()
+                    && let Some(active) = processes.get_mut(&run_id_for_task)
+                {
+                    active.process_id = Some(process_id);
+                }
+
+                let stdout_task = child.stdout.take().map(|pipe| {
+                    spawn_terminal_output(
+                        app.clone(),
+                        run_id_for_task.clone(),
+                        project.manifest.id.clone(),
+                        OutputStream::Stdout,
+                        pipe,
+                    )
+                });
+                let stderr_task = child.stderr.take().map(|pipe| {
+                    spawn_terminal_output(
+                        app.clone(),
+                        run_id_for_task.clone(),
+                        project.manifest.id.clone(),
+                        OutputStream::Stderr,
+                        pipe,
+                    )
+                });
+                let status = child.wait().await.map_err(display_error);
+                if let Some(task) = stdout_task {
+                    let _ = task.await;
+                }
+                if let Some(task) = stderr_task {
+                    let _ = task.await;
+                }
+                status
+            }
+            Err(error) => Err(display_error(error)),
+        };
+
+        if let Ok(mut processes) = runtime.processes.lock() {
+            processes.remove(&run_id_for_task);
+        }
+        let cancelled = runtime
+            .cancelled
+            .lock()
+            .map(|mut values| values.remove(&run_id_for_task))
+            .unwrap_or(false);
+        let duration_ms = started.elapsed().as_millis() as i64;
+        let (status, exit_code, line) = match result {
+            Ok(exit) if cancelled => ("cancelled", exit.code(), None),
+            Ok(exit) if exit.success() => ("success", exit.code(), None),
+            Ok(exit) => ("failed", exit.code(), None),
+            Err(error) => ("failed", None, Some(error)),
+        };
+        emit_run_event(
+            &app,
+            RunEventPayload {
+                run_id: run_id_for_task,
+                project_id: project.manifest.id,
+                action_id: TERMINAL_ACTION_ID.into(),
+                kind: "finished".into(),
+                stream: None,
+                line,
+                status: Some(status.into()),
+                exit_code,
+                duration_ms: Some(duration_ms),
+            },
+        );
+    });
+
+    Ok(run_id)
+}
+
+fn spawn_terminal_output<R>(
+    app: AppHandle,
+    run_id: String,
+    project_id: String,
+    stream: OutputStream,
+    pipe: R,
+) -> tokio::task::JoinHandle<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(pipe).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            emit_run_event(
+                &app,
+                RunEventPayload {
+                    run_id: run_id.clone(),
+                    project_id: project_id.clone(),
+                    action_id: TERMINAL_ACTION_ID.into(),
+                    kind: "output".into(),
+                    stream: Some(stream),
+                    line: Some(line),
+                    status: None,
+                    exit_code: None,
+                    duration_ms: None,
+                },
+            );
+        }
+    })
+}
+
+#[tauri::command]
 async fn stop_run(run_id: String, state: State<'_, AppState>) -> Result<(), String> {
     let process_id = state
         .runtime
@@ -758,6 +968,7 @@ pub fn run() {
             open_artifact,
             open_artifact_folder,
             start_action,
+            start_terminal_command,
             stop_run,
             open_in_deebugee,
         ])

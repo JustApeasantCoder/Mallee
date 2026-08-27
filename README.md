@@ -198,6 +198,7 @@ or `operation`.
 | `concurrency` | `allow` (default), `reject`, or `replace_same_action`. Use `replace_same_action` for a dev server. |
 | `timeout_seconds` | Optional execution limit, in seconds. |
 | `confirm` | Requires desktop confirmation before execution. |
+| `sound_notification` | Plays a success or failure sound in the desktop app when the action finishes. Defaults to `false`; cancelled actions stay silent. |
 | `icon` | Optional desktop presentation glyph; it does not change execution. |
 
 For a Mallee-specific multi-step PowerShell workflow, store the script under
@@ -212,6 +213,7 @@ args = ["-NoLogo", "-NoProfile", "-File", ".mallee/scripts/build-installer.ps1"]
 kind = "task"
 terminal = "captured"
 confirm = true
+sound_notification = true
 ```
 
 Do not create a wrapper script for a simple command such as `cargo test`.

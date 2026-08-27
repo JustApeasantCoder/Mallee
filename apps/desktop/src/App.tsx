@@ -6,6 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import type { Action, Artifact, ProjectSummary, RunEvent, RunRecord } from "./types";
 import malleeMark from "./assets/mallee-mark.svg";
+import actionFailureSound from "./assets/sounds/action-failure.wav";
+import actionSuccessSound from "./assets/sounds/action-success.ogg";
 
 type LayoutSplits = {
   left: number;
@@ -15,6 +17,12 @@ type LayoutSplits = {
 
 const LAYOUT_SPLITS_KEY = "mallee-desktop-layout-splits-v1";
 const DEFAULT_LAYOUT_SPLITS: LayoutSplits = { left: 0.62, actions: 0.35, artifacts: 0.2 };
+
+function playActionNotification(status: "success" | "failed") {
+  const audio = new Audio(status === "success" ? actionSuccessSound : actionFailureSound);
+  audio.volume = 0.55;
+  void audio.play().catch(() => undefined);
+}
 
 function loadLayoutSplits(): LayoutSplits {
   try {
@@ -34,6 +42,13 @@ function clampNumber(value: unknown, minimum: number, maximum: number, fallback:
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(maximum, Math.max(minimum, value))
     : fallback;
+}
+
+function projectWorkingDirectory(project: ProjectSummary) {
+  const configured = project.manifest.project.working_directory;
+  if (!configured || configured === ".") return project.root;
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/]{2})/.test(configured)) return configured;
+  return `${project.root.replace(/[\\/]+$/, "")}\\${configured.replace(/^[\\/]+/, "")}`;
 }
 
 function actionGlyph(action: Pick<Action, "id" | "label" | "operation" | "icon">) {
@@ -71,23 +86,38 @@ function ArtifactOpenIcon({ folder = false }: { folder?: boolean }) {
 type ProjectTerminalProps = {
   projectId: string;
   projectName: string;
+  workingDirectory: string;
+  busy: boolean;
   selected: boolean;
   onCopy: (contents: string) => void;
-  onRegister: (projectId: string, terminal?: Terminal) => void;
+  onCommand: (projectId: string, command: string) => Promise<void>;
+  onRegister: (projectId: string, terminal?: ProjectTerminalHandle) => void;
 };
 
-function ProjectTerminal({ projectId, projectName, selected, onCopy, onRegister }: ProjectTerminalProps) {
+type ProjectTerminalHandle = {
+  instance: Terminal;
+  clear: () => void;
+  prompt: () => void;
+};
+
+function ProjectTerminal({ projectId, projectName, workingDirectory, busy, selected, onCopy, onCommand, onRegister }: ProjectTerminalProps) {
   const host = useRef<HTMLDivElement>(null);
   const fit = useRef<FitAddon | undefined>(undefined);
+  const busyRef = useRef(busy);
+  const commandRef = useRef("");
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
 
   useEffect(() => {
     const element = host.current;
     if (!element) return;
 
     const instance = new Terminal({
-      cursorBlink: false,
+      cursorBlink: true,
       convertEol: true,
-      disableStdin: true,
+      disableStdin: false,
       fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.28,
@@ -119,17 +149,67 @@ function ProjectTerminal({ projectId, projectName, selected, onCopy, onRegister 
     const resizeObserver = new ResizeObserver(() => fitAddon.fit());
     resizeObserver.observe(element);
     instance.writeln(`\x1b[34m# ${projectName} terminal\x1b[0m`);
-    onRegister(projectId, instance);
+    const writePrompt = () => instance.write(`\x1b[32m${workingDirectory}>\x1b[0m `);
+    const clear = () => {
+      instance.clear();
+      instance.write("\x1b[2J\x1b[H");
+      commandRef.current = "";
+      if (!busyRef.current) writePrompt();
+    };
+    writePrompt();
+    const input = instance.onData((data) => {
+      if (busyRef.current) return;
+      if (data.startsWith("\x1b")) return;
+      for (const character of data) {
+        if (character === "\r") {
+          const command = commandRef.current.trim();
+          commandRef.current = "";
+          instance.write("\r\n");
+          if (!command) {
+            writePrompt();
+            continue;
+          }
+          busyRef.current = true;
+          void onCommand(projectId, command).catch(() => {
+            busyRef.current = false;
+            writePrompt();
+          });
+          break;
+        }
+        if (character === "\u007f") {
+          if (commandRef.current.length > 0) {
+            commandRef.current = commandRef.current.slice(0, -1);
+            instance.write("\b \b");
+          }
+          continue;
+        }
+        if (character === "\u0003") {
+          commandRef.current = "";
+          instance.write("^C\r\n");
+          writePrompt();
+          continue;
+        }
+        if (character >= " " && character !== "\u007f") {
+          commandRef.current += character;
+          instance.write(character);
+        }
+      }
+    });
+    onRegister(projectId, { instance, clear, prompt: writePrompt });
 
     return () => {
       resizeObserver.disconnect();
+      input.dispose();
       onRegister(projectId);
       instance.dispose();
     };
-  }, [onCopy, onRegister, projectId, projectName]);
+  }, [onCommand, onCopy, onRegister, projectId, projectName, workingDirectory]);
 
   useEffect(() => {
-    if (selected) requestAnimationFrame(() => fit.current?.fit());
+    if (selected) requestAnimationFrame(() => {
+      fit.current?.fit();
+      host.current?.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+    });
   }, [selected]);
 
   return <div className={`terminal-host ${selected ? "terminal-host-active" : "terminal-host-inactive"}`} ref={host} />;
@@ -157,7 +237,9 @@ function App() {
   const contentGrid = useRef<HTMLDivElement>(null);
   const actionsPanel = useRef<HTMLElement>(null);
   const actionGrid = useRef<HTMLDivElement>(null);
-  const terminals = useRef(new Map<string, Terminal>());
+  const terminals = useRef(new Map<string, ProjectTerminalHandle>());
+  const runningRef = useRef<Record<string, string>>({});
+  const projectsRef = useRef<ProjectSummary[]>([]);
   const selectedIdRef = useRef<string | undefined>(undefined);
   const dragMoved = useRef(false);
 
@@ -169,6 +251,10 @@ function App() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
 
   useEffect(() => {
     window.localStorage.setItem(LAYOUT_SPLITS_KEY, JSON.stringify(layoutSplits));
@@ -230,7 +316,7 @@ function App() {
     }
   }, []);
 
-  const registerTerminal = useCallback((projectId: string, instance?: Terminal) => {
+  const registerTerminal = useCallback((projectId: string, instance?: ProjectTerminalHandle) => {
     if (instance) terminals.current.set(projectId, instance);
     else terminals.current.delete(projectId);
   }, []);
@@ -251,26 +337,41 @@ function App() {
     let disposed = false;
     void listen<RunEvent>("mallee://run-event", (event) => {
       const payload = event.payload;
-      setRunning((current) => {
-        const next = { ...current };
-        const key = runKey(payload.projectId, payload.actionId);
-        if (payload.kind === "started") next[key] = payload.runId;
-        if (payload.kind === "finished" && next[key] === payload.runId) delete next[key];
-        return next;
-      });
+      const nextRunning = { ...runningRef.current };
+      const key = runKey(payload.projectId, payload.actionId);
+      if (payload.kind === "started") nextRunning[key] = payload.runId;
+      if (payload.kind === "finished" && nextRunning[key] === payload.runId) delete nextRunning[key];
+      runningRef.current = nextRunning;
+      setRunning(nextRunning);
+      const projectIsIdle = !Object.keys(nextRunning).some((item) => item.startsWith(`${payload.projectId}:`));
       const terminal = terminals.current.get(payload.projectId);
       if (payload.kind === "started") {
-        terminal?.writeln(`\r\n\x1b[34m[mallee]\x1b[0m started ${payload.actionId}`);
+        if (payload.actionId !== "__terminal__") {
+          terminal?.instance.writeln(`\r\n\x1b[34m[mallee]\x1b[0m started ${payload.actionId}`);
+        }
       } else if (payload.kind === "output" && payload.line !== undefined) {
           // Many tools (including Cargo) use stderr for normal progress. Reserve
           // red for Mallee's actual run failures instead of the output stream.
-        terminal?.writeln(payload.line);
+        terminal?.instance.writeln(payload.line);
       } else if (payload.kind === "finished") {
-        if (payload.line) terminal?.writeln(`\x1b[31m${payload.line}\x1b[0m`);
+        if (payload.line) terminal?.instance.writeln(`\x1b[31m${payload.line}\x1b[0m`);
         const color = payload.status === "success" ? "\x1b[32m" : "\x1b[31m";
-        terminal?.writeln(
-          `${color}[mallee] ${payload.status} (${formatDuration(payload.durationMs)})\x1b[0m`,
-        );
+        if (payload.actionId === "__terminal__") {
+          if (payload.status !== "success") {
+            terminal?.instance.writeln(`${color}[terminal] ${payload.status}\x1b[0m`);
+          }
+        } else {
+          terminal?.instance.writeln(
+            `${color}[mallee] ${payload.status} (${formatDuration(payload.durationMs)})\x1b[0m`,
+          );
+        }
+        if (projectIsIdle) terminal?.prompt();
+        const action = projectsRef.current
+          .find((project) => project.manifest.id === payload.projectId)
+          ?.manifest.actions.find((candidate) => candidate.id === payload.actionId);
+        if (action?.sound_notification && (payload.status === "success" || payload.status === "failed")) {
+          playActionNotification(payload.status);
+        }
         if (payload.projectId === selectedIdRef.current) {
           void loadProjectData(payload.projectId);
         }
@@ -290,13 +391,18 @@ function App() {
 
   async function runAction(action: Action) {
     if (!selected) return;
+    if (running[runKey(selected.manifest.id, "__terminal__")]) {
+      setError("Wait for the terminal command to finish before starting an action.");
+      return;
+    }
     const confirmed = !action.confirm || window.confirm(`Run ${action.label} for ${selected.manifest.name}?`);
     if (!confirmed) return;
     setError(undefined);
     if (action.program) {
       const terminal = terminals.current.get(selected.manifest.id);
-      terminal?.clear();
-      terminal?.writeln(
+      terminal?.instance.clear();
+      terminal?.instance.write("\x1b[2J\x1b[H");
+      terminal?.instance.writeln(
         `\x1b[32m${selected.root}>\x1b[0m ${action.program} ${action.args.join(" ")}`,
       );
     }
@@ -306,11 +412,25 @@ function App() {
         actionId: action.id,
         confirmed,
       });
+      if (action.operation && action.sound_notification) playActionNotification("success");
     } catch (reason) {
       setError(String(reason));
-      terminals.current.get(selected.manifest.id)?.writeln(`\x1b[31m[mallee] ${String(reason)}\x1b[0m`);
+      const terminal = terminals.current.get(selected.manifest.id);
+      terminal?.instance.writeln(`\x1b[31m[mallee] ${String(reason)}\x1b[0m`);
+      if (action.program) terminal?.prompt();
+      if (action.sound_notification) playActionNotification("failed");
     }
   }
+
+  const runTerminalCommand = useCallback(async (projectId: string, command: string) => {
+    setError(undefined);
+    try {
+      await invoke<string>("start_terminal_command", { projectId, command });
+    } catch (reason) {
+      setError(String(reason));
+      throw reason;
+    }
+  }, []);
 
   async function stopAction(actionId: string) {
     if (!selected) return;
@@ -324,12 +444,12 @@ function App() {
   }
 
   function copyTerminal() {
-    const instance = selectedId ? terminals.current.get(selectedId) : undefined;
-    if (!instance) return;
+    const terminal = selectedId ? terminals.current.get(selectedId) : undefined;
+    if (!terminal) return;
 
-    instance.selectAll();
-    const contents = instance.getSelection();
-    instance.clearSelection();
+    terminal.instance.selectAll();
+    const contents = terminal.instance.getSelection();
+    terminal.instance.clearSelection();
     void copyTerminalText(contents);
   }
 
@@ -373,6 +493,7 @@ function App() {
       terminal: "captured",
       concurrency: form.get("kind") === "long_running" ? "replace_same_action" : "allow",
       confirm: form.get("confirm") === "on",
+      sound_notification: form.get("sound_notification") === "on",
     };
     try {
       await invoke<ProjectSummary>("add_action", { projectId: selected.manifest.id, action });
@@ -630,7 +751,7 @@ function App() {
 
               <section className="panel terminal-panel">
                 <div className="panel-title-row">
-                  <h2>CURRENT TERMINAL</h2>
+                  <h2>TERMINAL</h2>
                   <div className="terminal-actions">
                     <button className="link-button" onClick={() => void copyTerminal()}>COPY</button>
                     <button className="link-button" onClick={() => selectedId && terminals.current.get(selectedId)?.clear()}>CLEAR</button>
@@ -641,8 +762,11 @@ function App() {
                     key={project.manifest.id}
                     projectId={project.manifest.id}
                     projectName={project.manifest.name}
+                    workingDirectory={projectWorkingDirectory(project)}
+                    busy={Object.keys(running).some((key) => key.startsWith(`${project.manifest.id}:`))}
                     selected={project.manifest.id === selectedId}
                     onCopy={copyTerminalText}
+                    onCommand={runTerminalCommand}
                     onRegister={registerTerminal}
                   />
                 ))}
@@ -694,6 +818,7 @@ function App() {
             <label>Arguments <small>one argument per line</small><textarea name="args" rows={5} placeholder={'-NoProfile\n-File\n.mallee/scripts/build-installer.ps1'} /></label>
             <label>Behavior<select name="kind" defaultValue="task"><option value="task">Task — exits when complete</option><option value="long_running">Long running — stays active</option></select></label>
             <label className="check-label"><input name="confirm" type="checkbox" /> Require confirmation before running</label>
+            <label className="check-label"><input name="sound_notification" type="checkbox" /> Play a sound when the action finishes</label>
             <div className="manifest-preview">Writes a validated action to <strong>.mallee/project.toml</strong>. A backup is created first.</div>
             <div className="modal-actions"><button type="button" onClick={() => setShowAddAction(false)}>CANCEL</button><button className="primary" type="submit">ADD ACTION</button></div>
           </form>

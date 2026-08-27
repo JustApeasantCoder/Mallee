@@ -183,6 +183,7 @@ fn command_action(id: &str, label: &str, program: &str, args: Vec<String>) -> Ac
         concurrency: ConcurrencyPolicy::Allow,
         timeout_seconds: None,
         confirm: false,
+        sound_notification: false,
     }
 }
 

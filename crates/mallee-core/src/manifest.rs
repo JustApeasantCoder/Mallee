@@ -94,6 +94,8 @@ pub struct Action {
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub confirm: bool,
+    #[serde(default)]
+    pub sound_notification: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -247,6 +249,9 @@ impl ProjectManifest {
         }
         if action.confirm {
             table["confirm"] = value(true);
+        }
+        if action.sound_notification {
+            table["sound_notification"] = value(true);
         }
 
         document
@@ -455,12 +460,20 @@ name = "Sample"
             "# keep this comment\nschema_version = 1\nid = \"sample\"\nname = \"Sample\"\n",
         )
         .unwrap();
-        let updated = ProjectManifest::append_action(directory.path(), action("build")).unwrap();
+        let mut build = action("build");
+        build.sound_notification = true;
+        let updated = ProjectManifest::append_action(directory.path(), build).unwrap();
         assert_eq!(updated.actions.len(), 1);
+        assert!(updated.actions[0].sound_notification);
         assert!(
             fs::read_to_string(&path)
                 .unwrap()
                 .contains("# keep this comment")
+        );
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("sound_notification = true")
         );
         assert!(path.with_extension("toml.bak").is_file());
     }
@@ -544,6 +557,22 @@ name = "Sample"
             concurrency: ConcurrencyPolicy::Allow,
             timeout_seconds: None,
             confirm: false,
+            sound_notification: false,
         }
+    }
+
+    #[test]
+    fn sound_notifications_are_opt_in() {
+        let disabled: ProjectManifest = toml::from_str(
+            "schema_version = 1\nid = \"sample\"\nname = \"Sample\"\n\n[[actions]]\nid = \"build\"\nlabel = \"Build\"\nprogram = \"cargo\"\n",
+        )
+        .unwrap();
+        assert!(!disabled.actions[0].sound_notification);
+
+        let enabled: ProjectManifest = toml::from_str(
+            "schema_version = 1\nid = \"sample\"\nname = \"Sample\"\n\n[[actions]]\nid = \"build\"\nlabel = \"Build\"\nprogram = \"cargo\"\nsound_notification = true\n",
+        )
+        .unwrap();
+        assert!(enabled.actions[0].sound_notification);
     }
 }
